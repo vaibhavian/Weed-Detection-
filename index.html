@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workbench Vision-OS | Hardware Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap');
+        
+        :root {
+            --color-bg: #0f1215;
+            --color-panel: #1e2227;
+            --color-border: #3c4146;
+            --color-arduino: #00979c;
+            --color-highlight: #f1c40f;
+        }
+
+        body {
+            background-color: var(--color-bg);
+            color: #e0e0e0;
+            font-family: 'JetBrains Mono', monospace;
+            overflow-x: hidden;
+            user-select: none;
+        }
+
+        .widget-panel {
+            background-color: var(--color-panel);
+            border: 1px solid var(--color-border);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .widget-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background-color: var(--color-border);
+        }
+
+        .led-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+
+        .bar-transition {
+            transition: width 0.1s linear, height 0.1s linear;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #0a0a0a; }
+        ::-webkit-scrollbar-thumb { background: #333; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--color-arduino); }
+    </style>
+</head>
+<body class="p-4 md:p-6 lg:p-10">
+
+    <div class="max-w-7xl mx-auto">
+        <!-- Header Section -->
+        <header class="flex flex-col md:flex-row md:items-end justify-between mb-8 border-b border-[#2a3036] pb-6 gap-4">
+            <div>
+                <div class="flex items-center gap-3 mb-2">
+                    <div class="bg-[#00979c] text-black text-[10px] font-bold px-2 py-0.5 rounded uppercase">Stable V2.4</div>
+                    <div class="flex items-center gap-1 text-green-500 text-[10px] led-pulse">
+                        <div class="w-1.5 h-1.5 rounded-full bg-green-500"></div> SYSTEM ONLINE
+                    </div>
+                </div>
+                <h1 class="text-3xl font-black text-white tracking-tighter uppercase italic">
+                    Workbench <span class="text-[#00979c]">Vision-OS</span>
+                </h1>
+            </div>
+            <div class="text-right">
+                <div class="text-[10px] text-[#555] uppercase font-bold tracking-widest">Global Telemetry Stream</div>
+                <div id="current-date" class="text-white text-xs font-bold tracking-wider">-- --- ----</div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            
+            <!-- 1. POWER MANAGEMENT -->
+            <div class="widget-panel rounded-lg flex flex-col">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-yellow-400 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">Power Management</span>
+                </div>
+                <div class="p-4 flex-grow">
+                    <div class="grid grid-cols-2 gap-2 mb-6">
+                        <div class="bg-[#111] p-3 border border-[#333] rounded-sm text-center">
+                            <div class="text-[9px] text-gray-500 mb-1">VOLTS (V)</div>
+                            <div id="val-voltage" class="text-2xl font-black tracking-tighter text-[#00ff41]">12.60</div>
+                        </div>
+                        <div class="bg-[#111] p-3 border border-[#333] rounded-sm text-center">
+                            <div class="text-[9px] text-gray-500 mb-1">AMPS (A)</div>
+                            <div id="val-current" class="text-2xl font-black tracking-tighter text-blue-400">0.00</div>
+                        </div>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[9px] text-gray-400 font-bold uppercase">
+                            <span>Drain Intensity</span>
+                            <span id="val-drain-perc">0%</span>
+                        </div>
+                        <div class="h-1.5 w-full bg-[#111] rounded-full overflow-hidden border border-[#333]">
+                            <div id="bar-drain" class="h-full bg-blue-500 bar-transition" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. CONTROLLER -->
+            <div class="widget-panel rounded-lg flex flex-col">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-[#00979c] w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">Controller: ATMEGA</span>
+                </div>
+                <div class="p-4 flex-grow space-y-4">
+                    <div class="flex justify-between items-center bg-[#111] p-2 border-l-2 border-[#00979c]">
+                        <span class="text-[10px] font-bold">INFERENCE LOAD</span>
+                        <span id="val-cpu" class="text-xs font-black text-[#00979c]">--%</span>
+                    </div>
+                    <div class="grid grid-cols-1 gap-2">
+                        <div class="flex items-center justify-between text-[10px] p-1.5 border border-[#333]">
+                            <span class="text-gray-400 uppercase">Pin D12 (Relay)</span>
+                            <span id="stat-relay" class="text-red-500 opacity-50 uppercase font-bold">Low</span>
+                        </div>
+                        <div class="flex items-center justify-between text-[10px] p-1.5 border border-[#333]">
+                            <span class="text-gray-400 uppercase">Pin D07 (PWM)</span>
+                            <span id="stat-pwm" class="text-blue-400 font-bold uppercase">Active</span>
+                        </div>
+                    </div>
+                    <div id="stat-ai" class="text-[10px] bg-yellow-400/10 p-2 border border-yellow-400/30 text-yellow-400 font-bold text-center uppercase tracking-widest">
+                        Status: Analyzing Live Feed
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. VISION FEED -->
+            <div class="widget-panel rounded-lg flex flex-col">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-red-500 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">Vision Feed: Live</span>
+                </div>
+                <div class="p-4">
+                    <div class="relative aspect-video bg-black rounded border-2 border-[#333] overflow-hidden">
+                        <video id="webcam" autoplay playsinline class="hidden"></video>
+                        <canvas id="vision-canvas" width="320" height="240" class="w-full h-full object-cover brightness-75 contrast-125"></canvas>
+                        
+                        <!-- HUD Overlays -->
+                        <div id="hud-overlay" class="absolute inset-0 pointer-events-none p-2 hidden">
+                            <div class="w-full h-full border border-red-500/40 flex flex-col items-center justify-center">
+                                <div id="detection-box" class="text-center">
+                                    <div class="bg-red-600 text-white text-[10px] font-black px-2 py-1 mb-1 uppercase tracking-tighter">
+                                        Target Locked
+                                    </div>
+                                    <div id="detection-label" class="text-red-500 text-[9px] font-bold">WEED 98%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. DRIVE MODULE -->
+            <div class="widget-panel rounded-lg flex flex-col">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-purple-500 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">L298N Drive Module</span>
+                </div>
+                <div class="p-4">
+                    <div id="pwm-viz" class="flex items-end justify-between h-20 gap-1 bg-[#0a0a0a] p-2 border border-[#333]">
+                        <!-- Bars injected by JS -->
+                    </div>
+                    <div class="mt-4 flex justify-between items-center text-[10px]">
+                        <span class="text-gray-500">PWM SIGNAL FREQUENCY:</span>
+                        <span class="text-white font-bold tracking-widest">490 HZ</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. ACTUATORS -->
+            <div class="widget-panel rounded-lg flex flex-col">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-orange-500 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 21h4m1.5-3.5L13 21M9 21l-2.5-3.5M12 3v13m-3-3l3 3 3-3"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">System Actuators</span>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div class="flex justify-between items-baseline">
+                        <span class="text-[10px] text-gray-500 font-bold uppercase">Rotor Velocity</span>
+                        <span id="val-rpm" class="text-xl font-black text-gray-700 italic">0 <span class="text-[10px] font-normal not-italic">RPM</span></span>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="flex justify-between text-[9px] font-bold">
+                            <span class="uppercase">Drill Assembly Depth</span>
+                            <span id="val-depth" class="text-orange-500">0%</span>
+                        </div>
+                        <div class="w-full h-6 bg-black border border-[#333] p-0.5">
+                            <div id="bar-depth" class="h-full bg-orange-500 bar-transition" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. HARDWARE CONSOLE -->
+            <div class="widget-panel rounded-lg flex flex-col">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-gray-500 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">Hardware Console</span>
+                </div>
+                <div class="p-3 bg-[#050505] flex-grow flex flex-col-reverse overflow-hidden font-mono text-[9px] leading-relaxed border border-[#222]" id="console-logs">
+                    <!-- Logs injected here -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-10 border-t border-[#2a3036] pt-6 flex flex-col md:flex-row items-center justify-between gap-6 pb-10">
+            <div class="flex gap-8">
+                <div class="flex flex-col">
+                    <span class="text-[9px] text-gray-500 font-bold uppercase tracking-widest">System Latency</span>
+                    <span class="text-xs text-white">4.2ms</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Thermal Sync</span>
+                    <span class="text-xs text-white">34.2°C</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Safety Hash</span>
+                    <span class="text-xs text-[#00979c] font-bold">0xAF238</span>
+                </div>
+            </div>
+            
+            <button onclick="location.reload()" class="group flex items-center gap-3 bg-[#e0e0e0] hover:bg-white text-black font-black py-3 px-8 rounded-sm transition-all transform hover:scale-105">
+                <svg class="w-4 h-4 fill-current group-hover:rotate-12 transition-transform" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> 
+                <span class="tracking-tighter uppercase text-sm">Hardware Reboot</span>
+            </button>
+        </footer>
+    </div>
+
+    <script>
+        // --- State Simulation ---
+        let state = {
+            voltage: 12.6,
+            current: 0.0,
+            cpu: 5,
+            cycleStep: 0, // 0:Searching, 1:Locked, 2:Lowering, 3:Drilling, 4:Raising, 5:Bypass
+            depth: 0,
+            rpm: 0,
+            drillTimer: 0, // New timer for drilling phase
+            isDriveActive: true,
+            isRelayActive: false,
+            detection: { type: null, conf: 0 }
+        };
+
+        // --- DOM Elements Cache ---
+        const elements = {
+            voltage: document.getElementById('val-voltage'),
+            current: document.getElementById('val-current'),
+            drainPerc: document.getElementById('val-drain-perc'),
+            barDrain: document.getElementById('bar-drain'),
+            cpu: document.getElementById('val-cpu'),
+            statRelay: document.getElementById('stat-relay'),
+            statPwm: document.getElementById('stat-pwm'),
+            statAi: document.getElementById('stat-ai'),
+            valRpm: document.getElementById('val-rpm'),
+            valDepth: document.getElementById('val-depth'),
+            barDepth: document.getElementById('bar-depth'),
+            consoleLogs: document.getElementById('console-logs'),
+            hud: document.getElementById('hud-overlay'),
+            label: document.getElementById('detection-label'),
+            canvas: document.getElementById('vision-canvas'),
+            video: document.getElementById('webcam'),
+            pwmViz: document.getElementById('pwm-viz')
+        };
+
+        // --- Helper: Logging ---
+        function addLog(msg, isCritical = false) {
+            const time = new Date().toLocaleTimeString([], { hour12: false });
+            const entry = document.createElement('div');
+            entry.className = "mb-1";
+            entry.innerHTML = `<span class="text-[#00979c] font-bold mr-2 opacity-50">CMD:</span><span class="${isCritical ? 'text-red-500' : 'text-gray-300'}">[${time}] ${msg}</span>`;
+            elements.consoleLogs.prepend(entry);
+            if (elements.consoleLogs.children.length > 8) elements.consoleLogs.lastElementChild.remove();
+        }
+
+        // --- Init: Webcam ---
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480, facingMode: "environment" } 
+                });
+                elements.video.srcObject = stream;
+                addLog("Camera stream established via Browser Media API.");
+            } catch (err) {
+                addLog("CRITICAL: Camera access denied.", true);
+                elements.statAi.innerText = "Error: Camera Disconnected";
+            }
+        }
+
+        // --- Simulation: State Machine ---
+        function runSimulationTick() {
+            // Electrical Physics
+            let load = 0.25;
+            if (state.isDriveActive) load += 1.8;
+            if (state.isRelayActive && state.rpm === 0) load += 0.8;
+            if (state.rpm > 0) load += 3.5;
+
+            state.current = load + (Math.random() * 0.1);
+            state.voltage = 12.6 - (load * 0.12);
+            state.cpu = 15 + Math.floor(Math.random() * 15);
+
+            // Step Logic
+            if (state.cycleStep === 0) {
+                state.isDriveActive = true;
+                state.isRelayActive = false;
+                state.rpm = 0;
+                state.drillTimer = 0;
+                elements.hud.classList.add('hidden');
+            } else if (state.cycleStep === 1) {
+                state.isDriveActive = false;
+                elements.statAi.innerText = "Status: Target Locked";
+                elements.hud.classList.remove('hidden');
+            } else if (state.cycleStep === 2) {
+                state.isRelayActive = true;
+                state.depth += 4;
+                if (state.depth >= 100) { 
+                    state.depth = 100; 
+                    state.cycleStep = 3; 
+                    state.drillTimer = 30; // ~3 seconds at 100ms ticks
+                    addLog("Action: Rotor Engaged. Commencing drilling.");
+                }
+            } else if (state.cycleStep === 3) {
+                state.rpm = 3000 + Math.floor(Math.random() * 200);
+                state.drillTimer--;
+                if (state.drillTimer <= 0) {
+                    state.cycleStep = 4;
+                    state.rpm = 0;
+                    addLog("Action: Drilling complete. Retracting assembly.");
+                }
+            } else if (state.cycleStep === 4) {
+                state.rpm = 0;
+                state.depth -= 5;
+                if (state.depth <= 0) {
+                    state.depth = 0;
+                    state.cycleStep = 0; // RESET TO SEARCHING
+                    state.isRelayActive = false;
+                    state.detection = { type: null, conf: 0 };
+                    elements.hud.classList.add('hidden');
+                    addLog("Action: Reset complete. Resuming AI patrol.");
+                }
+            } else if (state.cycleStep === 5) {
+                state.isDriveActive = true;
+                elements.statAi.innerText = "Safety Bypass: Crop Identified";
+            }
+
+            updateUI();
+        }
+
+        // --- Simulation: Vision Processing ---
+        function processFrame() {
+            if (elements.video.readyState === elements.video.HAVE_ENOUGH_DATA) {
+                const ctx = elements.canvas.getContext('2d');
+                ctx.drawImage(elements.video, 0, 0, 320, 240);
+                
+                // Only process AI detection when in SEARCHING (0) mode
+                if (state.cycleStep === 0) {
+                    const frame = ctx.getImageData(0, 0, 320, 240);
+                    let greenScore = 0;
+                    for (let i = 0; i < frame.data.length; i += 16) {
+                        const r = frame.data[i], g = frame.data[i+1], b = frame.data[i+2];
+                        if (g > 80 && g > r * 1.3 && g > b * 1.1) greenScore++;
+                    }
+
+                    if (greenScore > 1500) {
+                        const isWeed = Math.random() > 0.3;
+                        state.detection = { 
+                            type: isWeed ? "WEED" : "CROP", 
+                            conf: 92 + Math.floor(Math.random() * 7) 
+                        };
+                        
+                        if (isWeed) {
+                            state.cycleStep = 1;
+                            addLog("AI: WEED detected. Initiating brake.");
+                            elements.label.innerText = `WEED ${state.detection.conf}%`;
+                            // Automatic transition from lock to lowering
+                            setTimeout(() => { if(state.cycleStep === 1) state.cycleStep = 2; }, 1200);
+                        } else {
+                            state.cycleStep = 5;
+                            addLog("AI: CROP detected. Enabling safety bypass.");
+                            // Automatic reset for bypass
+                            setTimeout(() => { 
+                                if (state.cycleStep === 5) {
+                                    state.cycleStep = 0; 
+                                    addLog("AI: Safety clear. Resuming patrol.");
+                                }
+                            }, 2500);
+                        }
+                    }
+                }
+            }
+            requestAnimationFrame(processFrame);
+        }
+
+        // --- UI Updates ---
+        function updateUI() {
+            elements.voltage.innerText = state.voltage.toFixed(2);
+            elements.voltage.style.color = state.voltage < 11.4 ? '#ef4444' : '#00ff41';
+            elements.current.innerText = state.current.toFixed(2);
+            elements.drainPerc.innerText = `${((state.current / 6) * 100).toFixed(0)}%`;
+            elements.barDrain.style.width = `${(state.current / 6) * 100}%`;
+            elements.cpu.innerText = `${state.cpu}%`;
+            
+            elements.statRelay.innerText = state.isRelayActive ? "High" : "Low";
+            elements.statRelay.className = state.isRelayActive ? "text-green-400 font-bold uppercase" : "text-red-500 opacity-50 uppercase font-bold";
+            
+            elements.statPwm.innerText = state.isDriveActive ? "Active" : "Idle";
+            elements.statPwm.className = state.isDriveActive ? "text-blue-400 font-bold uppercase" : "text-red-500 opacity-50 uppercase font-bold";
+
+            if (state.cycleStep === 0) elements.statAi.innerText = "Status: Analyzing Live Feed";
+            if (state.cycleStep === 1) elements.statAi.innerText = "Status: Target Locked";
+            if (state.cycleStep === 2) elements.statAi.innerText = "Status: Actuating Drill";
+            if (state.cycleStep === 3) elements.statAi.innerText = "Action: Rotor Engaged";
+            if (state.cycleStep === 4) elements.statAi.innerText = "Status: Retracting Drill";
+
+            elements.valRpm.innerText = state.rpm > 0 ? state.rpm : "0";
+            elements.valRpm.style.color = state.rpm > 0 ? "#f1c40f" : "#374151";
+            elements.valDepth.innerText = `${state.depth}%`;
+            elements.barDepth.style.width = `${state.depth}%`;
+
+            // PWM Viz randomization
+            const bars = elements.pwmViz.children;
+            for (let bar of bars) {
+                bar.style.height = state.isDriveActive ? `${20 + Math.random() * 80}%` : '2px';
+                bar.style.backgroundColor = state.isDriveActive ? '#3b82f6' : '#222';
+            }
+        }
+
+        // Bootstrap
+        window.onload = () => {
+            document.getElementById('current-date').innerText = new Date().toDateString();
+            
+            // Create PWM bars
+            for(let i=0; i<20; i++) {
+                const bar = document.createElement('div');
+                bar.className = "w-full bar-transition";
+                elements.pwmViz.appendChild(bar);
+            }
+
+            initCamera();
+            setInterval(runSimulationTick, 100);
+            processFrame();
+            addLog("System Boot sequence complete.");
+            addLog("AI Vision Logic: Operational.");
+        };
+    </script>
+</body>
+</html>
