@@ -55,6 +55,16 @@
             transition: width 0.1s linear, height 0.1s linear;
         }
 
+        .history-item {
+            border: 1px solid #333;
+            background: #111;
+            transition: transform 0.2s;
+        }
+        .history-item:hover {
+            transform: scale(1.02);
+            border-color: var(--color-arduino);
+        }
+
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a0a; }
@@ -137,7 +147,7 @@
                             <span id="stat-pwm" class="text-blue-400 font-bold uppercase">Active</span>
                         </div>
                     </div>
-                    <div id="stat-ai" class="text-[10px] bg-yellow-400/10 p-2 border border-yellow-400/30 text-yellow-400 font-bold text-center uppercase tracking-widest">
+                    <div id="stat-ai" class="text-[10px] bg-yellow-400/10 p-2 border border-yellow-400/30 text-yellow-400 font-bold text-center uppercase tracking-widest leading-tight">
                         Status: Analyzing Live Feed
                     </div>
                 </div>
@@ -156,9 +166,9 @@
                         
                         <!-- HUD Overlays -->
                         <div id="hud-overlay" class="absolute inset-0 pointer-events-none p-2 hidden">
-                            <div class="w-full h-full border border-red-500/40 flex flex-col items-center justify-center">
+                            <div id="hud-border" class="w-full h-full border border-red-500/40 flex flex-col items-center justify-center">
                                 <div id="detection-box" class="text-center">
-                                    <div class="bg-red-600 text-white text-[10px] font-black px-2 py-1 mb-1 uppercase tracking-tighter">
+                                    <div id="detection-badge" class="bg-red-600 text-white text-[10px] font-black px-2 py-1 mb-1 uppercase tracking-tighter">
                                         Target Locked
                                     </div>
                                     <div id="detection-label" class="text-red-500 text-[9px] font-bold">WEED 98%</div>
@@ -209,7 +219,19 @@
                 </div>
             </div>
 
-            <!-- 6. HARDWARE CONSOLE -->
+            <!-- 6. TARGET ACTION HISTORY -->
+            <div class="widget-panel rounded-lg flex flex-col lg:row-span-2">
+                <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
+                    <svg class="text-blue-400 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <span class="text-[#f1c40f] text-[10px] font-black tracking-[0.2em] uppercase">Target Action History</span>
+                </div>
+                <div class="p-4 flex-grow overflow-y-auto max-h-[400px]" id="target-history">
+                    <div class="text-[10px] text-gray-600 italic text-center py-10" id="no-history">No detections recorded yet.</div>
+                    <!-- Captured images injected here -->
+                </div>
+            </div>
+
+            <!-- 7. HARDWARE CONSOLE -->
             <div class="widget-panel rounded-lg flex flex-col">
                 <div class="bg-[#2a3036] px-4 py-2 border-b border-[#3c4146] flex items-center gap-2">
                     <svg class="text-gray-500 w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
@@ -255,10 +277,11 @@
             cycleStep: 0, // 0:Searching, 1:Locked, 2:Lowering, 3:Drilling, 4:Raising, 5:Bypass
             depth: 0,
             rpm: 0,
-            drillTimer: 0, // New timer for drilling phase
+            drillTimer: 0,
             isDriveActive: true,
             isRelayActive: false,
-            detection: { type: null, conf: 0 }
+            detection: { type: null, conf: 0 },
+            capturedThisCycle: false // Prevent multiple captures per weed
         };
 
         // --- DOM Elements Cache ---
@@ -276,10 +299,14 @@
             barDepth: document.getElementById('bar-depth'),
             consoleLogs: document.getElementById('console-logs'),
             hud: document.getElementById('hud-overlay'),
+            hudBorder: document.getElementById('hud-border'),
+            badge: document.getElementById('detection-badge'),
             label: document.getElementById('detection-label'),
             canvas: document.getElementById('vision-canvas'),
             video: document.getElementById('webcam'),
-            pwmViz: document.getElementById('pwm-viz')
+            pwmViz: document.getElementById('pwm-viz'),
+            history: document.getElementById('target-history'),
+            noHistory: document.getElementById('no-history')
         };
 
         // --- Helper: Logging ---
@@ -290,6 +317,33 @@
             entry.innerHTML = `<span class="text-[#00979c] font-bold mr-2 opacity-50">CMD:</span><span class="${isCritical ? 'text-red-500' : 'text-gray-300'}">[${time}] ${msg}</span>`;
             elements.consoleLogs.prepend(entry);
             if (elements.consoleLogs.children.length > 8) elements.consoleLogs.lastElementChild.remove();
+        }
+
+        // --- Helper: Capture Target Image ---
+        function captureTarget(type, confidence) {
+            if (state.capturedThisCycle) return;
+            state.capturedThisCycle = true;
+            
+            elements.noHistory.style.display = 'none';
+            const dataUrl = elements.canvas.toDataURL('image/jpeg', 0.7);
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            const card = document.createElement('div');
+            card.className = "history-item p-2 rounded mb-3 border-l-4 " + (type === 'WEED' ? 'border-red-600' : 'border-green-600');
+            card.innerHTML = `
+                <div class="flex gap-3">
+                    <img src="${dataUrl}" class="w-20 h-15 object-cover rounded border border-[#333]">
+                    <div class="flex-grow">
+                        <div class="flex justify-between items-start mb-1">
+                            <span class="text-[10px] font-black ${type === 'WEED' ? 'text-red-500' : 'text-green-500'} tracking-tighter">${type} IDENTIFIED</span>
+                            <span class="text-[8px] text-gray-600">${time}</span>
+                        </div>
+                        <div class="text-[9px] text-gray-400 mb-1">CONFIDENCE: ${confidence}%</div>
+                        <div class="text-[8px] text-gray-500 uppercase">${type === 'WEED' ? 'STATUS: NEUTRALIZED' : 'STATUS: BYPASSED'}</div>
+                    </div>
+                </div>
+            `;
+            elements.history.prepend(card);
         }
 
         // --- Init: Webcam ---
@@ -324,6 +378,7 @@
                 state.isRelayActive = false;
                 state.rpm = 0;
                 state.drillTimer = 0;
+                state.capturedThisCycle = false;
                 elements.hud.classList.add('hidden');
             } else if (state.cycleStep === 1) {
                 state.isDriveActive = false;
@@ -335,8 +390,10 @@
                 if (state.depth >= 100) { 
                     state.depth = 100; 
                     state.cycleStep = 3; 
-                    state.drillTimer = 30; // ~3 seconds at 100ms ticks
-                    addLog("Action: Rotor Engaged. Commencing drilling.");
+                    state.drillTimer = 30; 
+                    addLog("Action: Rotor Engaged. Neutralizing target.");
+                    // Capture image right as action starts
+                    captureTarget(state.detection.type, state.detection.conf);
                 }
             } else if (state.cycleStep === 3) {
                 state.rpm = 3000 + Math.floor(Math.random() * 200);
@@ -344,22 +401,24 @@
                 if (state.drillTimer <= 0) {
                     state.cycleStep = 4;
                     state.rpm = 0;
-                    addLog("Action: Drilling complete. Retracting assembly.");
+                    addLog("Action: Target neutralized. Retracting assembly.");
                 }
             } else if (state.cycleStep === 4) {
                 state.rpm = 0;
                 state.depth -= 5;
                 if (state.depth <= 0) {
                     state.depth = 0;
-                    state.cycleStep = 0; // RESET TO SEARCHING
+                    state.cycleStep = 0; 
                     state.isRelayActive = false;
                     state.detection = { type: null, conf: 0 };
                     elements.hud.classList.add('hidden');
-                    addLog("Action: Reset complete. Resuming AI patrol.");
+                    addLog("Action: Cycle complete. Resuming AI patrol.");
                 }
             } else if (state.cycleStep === 5) {
                 state.isDriveActive = true;
                 elements.statAi.innerText = "Safety Bypass: Crop Identified";
+                // Capture even on bypass for record keeping
+                captureTarget(state.detection.type, state.detection.conf);
             }
 
             updateUI();
@@ -371,7 +430,6 @@
                 const ctx = elements.canvas.getContext('2d');
                 ctx.drawImage(elements.video, 0, 0, 320, 240);
                 
-                // Only process AI detection when in SEARCHING (0) mode
                 if (state.cycleStep === 0) {
                     const frame = ctx.getImageData(0, 0, 320, 240);
                     let greenScore = 0;
@@ -387,16 +445,27 @@
                             conf: 92 + Math.floor(Math.random() * 7) 
                         };
                         
+                        // Update HUD UI based on classification
                         if (isWeed) {
-                            state.cycleStep = 1;
-                            addLog("AI: WEED detected. Initiating brake.");
+                            elements.hudBorder.style.borderColor = "rgba(239, 68, 68, 0.6)"; // Red for weed
+                            elements.badge.style.backgroundColor = "#dc2626";
+                            elements.badge.innerText = "Target Locked";
                             elements.label.innerText = `WEED ${state.detection.conf}%`;
-                            // Automatic transition from lock to lowering
+                            elements.label.style.color = "#ef4444";
+                            
+                            state.cycleStep = 1;
+                            addLog("AI: WEED detected. Commencing neutralization sequence.");
                             setTimeout(() => { if(state.cycleStep === 1) state.cycleStep = 2; }, 1200);
                         } else {
+                            elements.hudBorder.style.borderColor = "rgba(34, 197, 94, 0.6)"; // Green for crop
+                            elements.badge.style.backgroundColor = "#16a34a";
+                            elements.badge.innerText = "Crop Identified";
+                            elements.label.innerText = `CROP ${state.detection.conf}%`;
+                            elements.label.style.color = "#22c55e";
+                            elements.hud.classList.remove('hidden');
+
                             state.cycleStep = 5;
-                            addLog("AI: CROP detected. Enabling safety bypass.");
-                            // Automatic reset for bypass
+                            addLog("AI: CROP detected. Enabling safety bypass protocol.");
                             setTimeout(() => { 
                                 if (state.cycleStep === 5) {
                                     state.cycleStep = 0; 
@@ -426,17 +495,17 @@
             elements.statPwm.className = state.isDriveActive ? "text-blue-400 font-bold uppercase" : "text-red-500 opacity-50 uppercase font-bold";
 
             if (state.cycleStep === 0) elements.statAi.innerText = "Status: Analyzing Live Feed";
-            if (state.cycleStep === 1) elements.statAi.innerText = "Status: Target Locked";
+            if (state.cycleStep === 1) elements.statAi.innerText = "Status: Target Locked (WEED)";
             if (state.cycleStep === 2) elements.statAi.innerText = "Status: Actuating Drill";
-            if (state.cycleStep === 3) elements.statAi.innerText = "Action: Rotor Engaged";
+            if (state.cycleStep === 3) elements.statAi.innerText = "Action: Neutralizing Target";
             if (state.cycleStep === 4) elements.statAi.innerText = "Status: Retracting Drill";
+            if (state.cycleStep === 5) elements.statAi.innerText = "Safety Bypass: CROP Protected";
 
             elements.valRpm.innerText = state.rpm > 0 ? state.rpm : "0";
             elements.valRpm.style.color = state.rpm > 0 ? "#f1c40f" : "#374151";
             elements.valDepth.innerText = `${state.depth}%`;
             elements.barDepth.style.width = `${state.depth}%`;
 
-            // PWM Viz randomization
             const bars = elements.pwmViz.children;
             for (let bar of bars) {
                 bar.style.height = state.isDriveActive ? `${20 + Math.random() * 80}%` : '2px';
@@ -447,14 +516,11 @@
         // Bootstrap
         window.onload = () => {
             document.getElementById('current-date').innerText = new Date().toDateString();
-            
-            // Create PWM bars
             for(let i=0; i<20; i++) {
                 const bar = document.createElement('div');
                 bar.className = "w-full bar-transition";
                 elements.pwmViz.appendChild(bar);
             }
-
             initCamera();
             setInterval(runSimulationTick, 100);
             processFrame();
