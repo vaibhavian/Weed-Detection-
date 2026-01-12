@@ -194,16 +194,9 @@
                         <video id="webcam" autoplay playsinline class="hidden"></video>
                         <canvas id="vision-canvas" width="320" height="240" class="w-full h-full object-cover brightness-75 contrast-125"></canvas>
                         
-                        <!-- HUD Overlays -->
-                        <div id="hud-overlay" class="absolute inset-0 pointer-events-none p-2 hidden">
-                            <div id="hud-border" class="w-full h-full border border-red-500/40 flex flex-col items-center justify-center">
-                                <div id="detection-box" class="text-center">
-                                    <div id="detection-badge" class="bg-red-600 text-white text-[10px] font-black px-2 py-1 mb-1 uppercase tracking-tighter">
-                                        Target Locked
-                                    </div>
-                                    <div id="detection-label" class="text-red-500 text-[9px] font-bold">WEED 98%</div>
-                                </div>
-                            </div>
+                        <!-- HUD Overlay Container -->
+                        <div id="hud-container" class="absolute inset-0 pointer-events-none">
+                            <!-- Dynamic Boxes will be injected here -->
                         </div>
                     </div>
                 </div>
@@ -310,8 +303,9 @@
             drillTimer: 0,
             isDriveActive: true,
             isRelayActive: false,
-            detection: { type: null, conf: 0 },
-            capturedThisCycle: false // Prevent multiple captures per weed
+            detections: [], // Array of {type, x, y, w, h, conf}
+            activeTarget: null,
+            capturedThisCycle: false 
         };
 
         // --- DOM Elements Cache ---
@@ -328,10 +322,7 @@
             valDepth: document.getElementById('val-depth'),
             barDepth: document.getElementById('bar-depth'),
             consoleLogs: document.getElementById('console-logs'),
-            hud: document.getElementById('hud-overlay'),
-            hudBorder: document.getElementById('hud-border'),
-            badge: document.getElementById('detection-badge'),
-            label: document.getElementById('detection-label'),
+            hudContainer: document.getElementById('hud-container'),
             canvas: document.getElementById('vision-canvas'),
             video: document.getElementById('webcam'),
             pwmViz: document.getElementById('pwm-viz'),
@@ -409,11 +400,10 @@
                 state.rpm = 0;
                 state.drillTimer = 0;
                 state.capturedThisCycle = false;
-                elements.hud.classList.add('hidden');
+                state.activeTarget = null;
             } else if (state.cycleStep === 1) {
                 state.isDriveActive = false;
-                elements.statAi.innerText = "Status: Target Locked";
-                elements.hud.classList.remove('hidden');
+                elements.statAi.innerText = "Status: Target Locked (WEED)";
             } else if (state.cycleStep === 2) {
                 state.isRelayActive = true;
                 state.depth += 4;
@@ -422,8 +412,7 @@
                     state.cycleStep = 3; 
                     state.drillTimer = 30; 
                     addLog("Action: Rotor Engaged. Neutralizing target.");
-                    // Capture image right as action starts
-                    captureTarget(state.detection.type, state.detection.conf);
+                    if(state.activeTarget) captureTarget(state.activeTarget.type, state.activeTarget.conf);
                 }
             } else if (state.cycleStep === 3) {
                 state.rpm = 3000 + Math.floor(Math.random() * 200);
@@ -440,73 +429,118 @@
                     state.depth = 0;
                     state.cycleStep = 0; 
                     state.isRelayActive = false;
-                    state.detection = { type: null, conf: 0 };
-                    elements.hud.classList.add('hidden');
                     addLog("Action: Cycle complete. Resuming AI patrol.");
                 }
             } else if (state.cycleStep === 5) {
                 state.isDriveActive = true;
-                elements.statAi.innerText = "Safety Bypass: Crop Identified";
-                // Capture even on bypass for record keeping
-                captureTarget(state.detection.type, state.detection.conf);
+                elements.statAi.innerText = "Safety Bypass: CROP Identified";
+                if(state.activeTarget) captureTarget(state.activeTarget.type, state.activeTarget.conf);
             }
 
             updateUI();
         }
 
-        // --- Simulation: Vision Processing ---
+        // --- Simulation: Multi-Target Vision Processing ---
         function processFrame() {
             if (elements.video.readyState === elements.video.HAVE_ENOUGH_DATA) {
                 const ctx = elements.canvas.getContext('2d');
                 ctx.drawImage(elements.video, 0, 0, 320, 240);
                 
-                if (state.cycleStep === 0) {
+                // Clear and Scan
+                if (state.cycleStep === 0 || state.cycleStep === 5) {
                     const frame = ctx.getImageData(0, 0, 320, 240);
-                    let greenScore = 0;
-                    for (let i = 0; i < frame.data.length; i += 16) {
-                        const r = frame.data[i], g = frame.data[i+1], b = frame.data[i+2];
-                        if (g > 80 && g > r * 1.3 && g > b * 1.1) greenScore++;
-                    }
-
-                    if (greenScore > 1500) {
-                        const isWeed = Math.random() > 0.3;
-                        state.detection = { 
-                            type: isWeed ? "WEED" : "CROP", 
-                            conf: 92 + Math.floor(Math.random() * 7) 
-                        };
+                    let greenClusters = [];
+                    
+                    // Simple simulated clustering: check 10 random points for green density
+                    for(let i=0; i<8; i++) {
+                        let rx = Math.floor(Math.random() * 260) + 30;
+                        let ry = Math.floor(Math.random() * 180) + 30;
+                        let pixelIdx = (ry * 320 + rx) * 4;
                         
-                        // Update HUD UI based on classification
-                        if (isWeed) {
-                            elements.hudBorder.style.borderColor = "rgba(239, 68, 68, 0.6)"; // Red for weed
-                            elements.badge.style.backgroundColor = "#dc2626";
-                            elements.badge.innerText = "Target Locked";
-                            elements.label.innerText = `WEED ${state.detection.conf}%`;
-                            elements.label.style.color = "#ef4444";
-                            
-                            state.cycleStep = 1;
-                            addLog("AI: WEED detected. Commencing neutralization sequence.");
-                            setTimeout(() => { if(state.cycleStep === 1) state.cycleStep = 2; }, 1200);
-                        } else {
-                            elements.hudBorder.style.borderColor = "rgba(34, 197, 94, 0.6)"; // Green for crop
-                            elements.badge.style.backgroundColor = "#16a34a";
-                            elements.badge.innerText = "Crop Identified";
-                            elements.label.innerText = `CROP ${state.detection.conf}%`;
-                            elements.label.style.color = "#22c55e";
-                            elements.hud.classList.remove('hidden');
+                        let r = frame.data[pixelIdx], g = frame.data[pixelIdx+1], b = frame.data[pixelIdx+2];
+                        
+                        if (g > 70 && g > r * 1.2 && g > b * 1.1) {
+                            // Found a "green" entity
+                            let isWeed = (rx + ry) % 3 === 0; // Deterministic random-like split
+                            greenClusters.push({
+                                type: isWeed ? 'WEED' : 'CROP',
+                                x: rx - 30, y: ry - 30,
+                                w: 60, h: 60,
+                                conf: 85 + Math.floor(Math.random() * 14)
+                            });
+                        }
+                    }
+                    state.detections = greenClusters;
 
+                    // Decision Logic: If searching and a weed is present, lock on
+                    if (state.cycleStep === 0 && state.detections.length > 0) {
+                        let weed = state.detections.find(d => d.type === 'WEED');
+                        let crop = state.detections.find(d => d.type === 'CROP');
+
+                        if (weed) {
+                            state.activeTarget = weed;
+                            state.cycleStep = 1;
+                            addLog("AI: WEED identified in multi-target field.");
+                            setTimeout(() => { if(state.cycleStep === 1) state.cycleStep = 2; }, 1200);
+                        } else if (crop) {
+                            state.activeTarget = crop;
                             state.cycleStep = 5;
-                            addLog("AI: CROP detected. Enabling safety bypass protocol.");
-                            setTimeout(() => { 
-                                if (state.cycleStep === 5) {
-                                    state.cycleStep = 0; 
-                                    addLog("AI: Safety clear. Resuming patrol.");
-                                }
-                            }, 2500);
+                            addLog("AI: CROPS detected. Activating bypass tracking.");
+                            setTimeout(() => { if(state.cycleStep === 5) state.cycleStep = 0; }, 2500);
                         }
                     }
                 }
             }
+            
+            renderHUD();
             requestAnimationFrame(processFrame);
+        }
+
+        // --- HUD Rendering: Multiple Boxes ---
+        function renderHUD() {
+            elements.hudContainer.innerHTML = '';
+            
+            state.detections.forEach(det => {
+                const box = document.createElement('div');
+                const isTargeted = state.activeTarget && state.activeTarget.x === det.x;
+                const color = det.type === 'WEED' ? '#ef4444' : '#22c55e';
+                
+                box.style.position = 'absolute';
+                box.style.left = `${(det.x / 320) * 100}%`;
+                box.style.top = `${(det.y / 240) * 100}%`;
+                box.style.width = `${(det.w / 320) * 100}%`;
+                box.style.height = `${(det.h / 240) * 100}%`;
+                box.style.border = `2px solid ${color}`;
+                box.style.boxShadow = isTargeted ? `0 0 15px ${color}` : 'none';
+                
+                const label = document.createElement('div');
+                label.style.position = 'absolute';
+                label.style.top = '-18px';
+                label.style.left = '-2px';
+                label.style.backgroundColor = color;
+                label.style.color = 'white';
+                label.style.fontSize = '8px';
+                label.style.padding = '1px 4px';
+                label.style.fontWeight = 'bold';
+                label.style.whiteSpace = 'nowrap';
+                label.innerText = `${det.type} ${det.conf}% ${isTargeted ? '[LOCKED]' : ''}`;
+                
+                box.appendChild(label);
+                
+                // Add crosshair for weeds
+                if (det.type === 'WEED') {
+                    const ch = document.createElement('div');
+                    ch.style.position = 'absolute';
+                    ch.style.top = '50%'; ch.style.left = '50%';
+                    ch.style.width = '10px'; ch.style.height = '10px';
+                    ch.style.border = '1px solid #ef4444';
+                    ch.style.borderRadius = '50%';
+                    ch.style.transform = 'translate(-50%, -50%)';
+                    box.appendChild(ch);
+                }
+
+                elements.hudContainer.appendChild(box);
+            });
         }
 
         // --- UI Updates ---
@@ -524,12 +558,12 @@
             elements.statPwm.innerText = state.isDriveActive ? "Active" : "Idle";
             elements.statPwm.className = state.isDriveActive ? "text-blue-400 font-bold uppercase" : "text-red-500 opacity-50 uppercase font-bold";
 
-            if (state.cycleStep === 0) elements.statAi.innerText = "Status: Analyzing Live Feed";
+            if (state.cycleStep === 0) elements.statAi.innerText = "Status: Analyzing Multi-Target Feed";
             if (state.cycleStep === 1) elements.statAi.innerText = "Status: Target Locked (WEED)";
             if (state.cycleStep === 2) elements.statAi.innerText = "Status: Actuating Drill";
             if (state.cycleStep === 3) elements.statAi.innerText = "Action: Neutralizing Target";
             if (state.cycleStep === 4) elements.statAi.innerText = "Status: Retracting Drill";
-            if (state.cycleStep === 5) elements.statAi.innerText = "Safety Bypass: CROP Protected";
+            if (state.cycleStep === 5) elements.statAi.innerText = "Safety Bypass: Protecting CROPS";
 
             elements.valRpm.innerText = state.rpm > 0 ? state.rpm : "0";
             elements.valRpm.style.color = state.rpm > 0 ? "#f1c40f" : "#374151";
@@ -555,7 +589,7 @@
             setInterval(runSimulationTick, 100);
             processFrame();
             addLog("System Boot sequence complete.");
-            addLog("AI Vision Logic: Operational.");
+            addLog("Multi-Target AI Engine: Initialized.");
         };
     </script>
 </body>
